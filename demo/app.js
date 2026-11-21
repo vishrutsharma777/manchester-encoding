@@ -19,8 +19,7 @@
   const START_IDLE = 2;                                 // cycles with en low after reset
   const HIST = 36;
 
-  let L, hist, journey, rxCur, rxIdx, chkIdx, cnt, playing = false, timer = null,
-      pendingInject = false, busy = false;
+  let L, hist, journey, rxCur, rxIdx, chkIdx, cnt, playing = false, pendingInject = false;
 
   // ------------------------------------------------------------- build svg
   function mkCells(groupId, x0, y0, w, h, gap) {
@@ -49,9 +48,8 @@
     hist = [];
     journey = []; rxCur = null; rxIdx = 0; chkIdx = 0;
     cnt = { inj: 0, inj1: 0, inj2: 0 };
-    pendingInject = false;
-    $('tokens').innerHTML = '';
-    render();
+    pendingInject = false; stepQueue = 0;
+    render(); drawTokens(null);
   }
 
   // One rising edge. Returns the wires that were in force during the cycle.
@@ -94,68 +92,95 @@
     return w;
   }
 
-  function step(n) {
-    if (busy) return;
-    let w;
-    if (n > 1 || stepInterval() < 140) {
-      for (let k = 0; k < n; k++) w = edge();
-      pulseClock(); if (w.inj) flash();
-      render();
-      return;
-    }
-    w = edge();
-    busy = true;
-    animateTokens(w, Math.min(650, stepInterval() * 0.7), () => {
-      busy = false; pulseClock(); if (w.inj) flash(); render();
-    });
+  // ------------------------------------------------------------- scheduler
+  // One frame loop drives everything. While playing, the number of edges that
+  // are due is computed from the wall clock, so the rate shown on the slider is
+  // the rate you get no matter how long a redraw takes. Tokens are positioned by
+  // how far we are through the current cycle: they carry the values on the
+  // wires now and arrive at the sampling flop exactly when the edge fires.
+  const ANIM_MAX = 8;                  // clk/s above which tokens are hidden
+  const STEP_MS = 550;                 // duration of one animated manual step
+  let tPlay = 0, edgesPlayed = 0, stepQueue = 0, tStep = 0, loopOn = false;
+
+  const speedNow = () => SPEEDS[+$('speed').value];
+
+  function fire(n) {
+    let w = null;
+    for (let k = 0; k < n; k++) w = edge();
+    if (w) { pulseClock(); if (w.inj) flash(); render(); }
   }
 
-  const stepInterval = () => 1000 / SPEEDS[+$('speed').value];
-  function play() {
-    playing = true; $('btnPlay').textContent = '❚❚ Pause';
-    const tick = () => {
-      if (!playing) return;
-      const iv = stepInterval();
-      if (iv < 30) { for (let k = 0; k < Math.round(30 / iv); k++) edge(); pulseClock(); render(); }
-      else step(1);
-      timer = setTimeout(tick, Math.max(iv, 30));
-    };
-    tick();
+  function loop() {
+    const now = performance.now();
+    if (playing) {
+      const spd = speedNow();
+      let due = Math.floor((now - tPlay) * spd / 1000) - edgesPlayed;
+      if (due > 5000) {                // tab was in the background: don't replay minutes
+        fire(1); tPlay = now; edgesPlayed = 0; due = 0;
+      }
+      if (due > 0) { fire(due); edgesPlayed += due; }
+      const frac = (now - tPlay) * spd / 1000 - edgesPlayed;
+      drawTokens(spd <= ANIM_MAX ? Math.min(1, Math.max(0, frac)) : null);
+    } else if (stepQueue > 0) {
+      const u = (now - tStep) / STEP_MS;
+      if (u >= 1) {
+        fire(1); stepQueue--; tStep = now;
+        drawTokens(stepQueue > 0 ? 0 : null);
+      } else drawTokens(u);
+    } else drawTokens(null);
+    loopOn = playing || stepQueue > 0;
+    if (loopOn) setTimeout(loop, 16);   // setTimeout, not rAF: keeps running if rAF is throttled
   }
-  function stop() { playing = false; clearTimeout(timer); $('btnPlay').textContent = '▶ Play'; }
+  function kick() { if (!loopOn) { loopOn = true; setTimeout(loop, 0); } }
+
+  function step(n) {
+    stop();
+    if (stepQueue === 0) tStep = performance.now();
+    stepQueue += n;
+    kick();
+  }
+  function play() {
+    stepQueue = 0;
+    playing = true; $('btnPlay').textContent = '❚❚ Pause';
+    tPlay = performance.now(); edgesPlayed = 0;
+    kick();
+  }
+  function stop() {
+    playing = false; $('btnPlay').textContent = '▶ Play';
+  }
+  function rebase() {                  // speed changed mid-play: keep going from here
+    if (playing) { tPlay = performance.now(); edgesPlayed = 0; }
+  }
 
   // ------------------------------------------------------------- tokens
-  function animateTokens(w, dur, done) {
-    const g = $('tokens'); g.innerHTML = '';
-    const jobs = [];
-    const tok = (paths, vals) => {
-      const el = document.createElementNS(SVGNS, 'g'); el.setAttribute('class', 'token');
-      const c = document.createElementNS(SVGNS, 'circle'); c.setAttribute('r', 9);
-      const t = document.createElementNS(SVGNS, 'text');
-      el.appendChild(c); el.appendChild(t); g.appendChild(el);
-      jobs.push({ el, c, t, paths: paths.map((p) => $(p)), vals });
-    };
-    if (w.bit_req) tok(['w_txbit'], [w.tx_bit]);
-    if (w.en || w.dec_en) tok(['w_hbtx', 'w_hbrx'], [w.hb_tx, w.hb_rx]);
-    if (w.rx_valid) tok(['w_rxbit'], [w.rx_bit]);
-    if (!jobs.length) { setTimeout(done, dur * 0.6); return; }
+  const TOKENS = [
+    { paths: ['w_txbit'], on: (w) => w.bit_req, vals: (w) => [w.tx_bit] },
+    { paths: ['w_hbtx', 'w_hbrx'], on: (w) => w.en || w.dec_en, vals: (w) => [w.hb_tx, w.hb_rx] },
+    { paths: ['w_rxbit'], on: (w) => w.rx_valid, vals: (w) => [w.rx_bit] },
+  ];
+  for (const T of TOKENS) {
+    const el = document.createElementNS(SVGNS, 'g'); el.setAttribute('class', 'token');
+    const c = document.createElementNS(SVGNS, 'circle'); c.setAttribute('r', 9);
+    const t = document.createElementNS(SVGNS, 'text');
+    el.appendChild(c); el.appendChild(t); el.style.display = 'none';
+    $('tokens').appendChild(el);
+    Object.assign(T, { el, c, t, p: T.paths.map((id) => $(id)) });
+    T.len = T.p.map((p) => p.getTotalLength());
+  }
+  function drawTokens(u) {
+    const w = u === null ? null : L.wires(enFor(L.cycle));
     const one = css('--one'), zero = css('--zero'), errc = css('--err');
-    const t0 = performance.now();
-    const frame = (now) => {
-      const u = Math.min(1, (now - t0) / dur);
-      for (const j of jobs) {
-        const n = j.paths.length, seg = Math.min(n - 1, Math.floor(u * n)), su = u * n - seg;
-        const p = j.paths[seg], len = p.getTotalLength(), pt = p.getPointAtLength(len * Math.min(1, su));
-        j.el.setAttribute('transform', `translate(${pt.x},${pt.y})`);
-        const v = j.vals[seg];
-        const isErr = seg > 0 && j.vals[seg] !== j.vals[0];
-        j.c.setAttribute('fill', isErr ? errc : (v ? one : zero));
-        j.t.textContent = v;
-      }
-      if (u < 1) requestAnimationFrame(frame);
-      else { setTimeout(() => { g.innerHTML = ''; }, 120); done(); }
-    };
-    requestAnimationFrame(frame);
+    for (const T of TOKENS) {
+      if (!w || !T.on(w)) { T.el.style.display = 'none'; continue; }
+      const vals = T.vals(w), n = T.p.length;
+      const seg = Math.min(n - 1, Math.floor(u * n)), su = Math.min(1, u * n - seg);
+      const pt = T.p[seg].getPointAtLength(T.len[seg] * su);
+      T.el.style.display = '';
+      T.el.setAttribute('transform', `translate(${pt.x},${pt.y})`);
+      const v = vals[seg], isErr = seg > 0 && v !== vals[0];
+      T.c.setAttribute('fill', isErr ? errc : (v ? one : zero));
+      T.t.textContent = v;
+    }
   }
   function pulseClock() {
     for (const id of ['clkA', 'clkTx', 'clkRx']) {
@@ -452,14 +477,14 @@
 
   // ------------------------------------------------------------- wiring
   $('btnReset').onclick = reset;
-  $('btnStep').onclick = () => { stop(); step(1); };
-  $('btnStepBit').onclick = () => { stop(); step(2); };
+  $('btnStep').onclick = () => step(1);
+  $('btnStepBit').onclick = () => step(2);
   $('btnPlay').onclick = () => (playing ? stop() : play());
   $('btnInject').onclick = () => { pendingInject = true; render(); };
   $('bug').onchange = reset;
   $('real').onchange = () => document.getElementById('diagram').classList.toggle('real', $('real').checked);
   const spd = () => { $('speedLbl').textContent = SPEEDS[+$('speed').value] + ' clk/s'; };
-  $('speed').oninput = spd; spd();
+  $('speed').oninput = () => { spd(); rebase(); }; spd();
   $('btnSweep').onclick = runSweep;
   $('ratio').onchange = drawMeta; $('win').onchange = drawMeta;
   $('btnMeta').onclick = () => { metaSeed = Math.random(); drawMeta(); };
