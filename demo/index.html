@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manchester Link Demo</title>
+<meta name="description" content="Cycle-accurate, interactive walk-through of a Manchester + PRBS9 link in Verilog: bits from the PRBS generator through the encoder, channel, decoder and self-synchronising checker.">
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#16181d; --muted:#5d6472; --line:#c9ced8; --wire:#8a92a3;
+  --one:#0f8a5f; --zero:#3d5a99; --err:#d1343a; --warn:#b26a00; --accent:#2f5bd3;
+  --tx:rgba(47,91,211,.07); --rx:rgba(196,110,0,.08); --chip:#eef1f6; --dash:#c03a8a;
+  --block:#fbfcfe; --blockline:#9aa3b5; --code:#f0f2f6;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1115; --panel:#171a21; --ink:#e7e9ee; --muted:#9aa1ae; --line:#2c313c; --wire:#6b7385;
+    --one:#3ccf91; --zero:#7e9cf0; --err:#ff5c61; --warn:#f0a53a; --accent:#7e9cf0;
+    --tx:rgba(126,156,240,.08); --rx:rgba(240,165,58,.08); --chip:#1f2430; --dash:#f06bb8;
+    --block:#1b1f27; --blockline:#4a5263; --code:#1f2430;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1115; --panel:#171a21; --ink:#e7e9ee; --muted:#9aa1ae; --line:#2c313c; --wire:#6b7385;
+  --one:#3ccf91; --zero:#7e9cf0; --err:#ff5c61; --warn:#f0a53a; --accent:#7e9cf0;
+  --tx:rgba(126,156,240,.08); --rx:rgba(240,165,58,.08); --chip:#1f2430; --dash:#f06bb8;
+  --block:#1b1f27; --blockline:#4a5263; --code:#1f2430;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+code,.mono{font-family:ui-monospace,"Cascadia Code",Consolas,monospace;font-size:.92em}
+code{background:var(--code);padding:1px 5px;border-radius:4px}
+a{color:var(--accent)}
+.wrap{max-width:1240px;margin:0 auto;padding:20px 16px 60px}
+header h1{font-size:1.65rem;margin:0 0 4px;letter-spacing:-.01em}
+header p{margin:0;color:var(--muted);max-width:900px}
+.badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.badge{font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:2px 10px;color:var(--muted);background:var(--panel)}
+.badge b{color:var(--one)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-top:16px}
+.panel h2{font-size:1.1rem;margin:0 0 8px}
+.panel h3{font-size:.98rem;margin:14px 0 6px}
+.controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.controls .grp{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+button{font:inherit;font-size:.9rem;border:1px solid var(--line);background:var(--chip);color:var(--ink);
+  padding:5px 12px;border-radius:7px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{border-color:var(--err);color:var(--err)}
+select,input[type=range]{font:inherit;font-size:.9rem}
+select{background:var(--chip);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:4px 6px}
+label.tog{display:flex;gap:6px;align-items:center;font-size:.9rem;cursor:pointer;user-select:none}
+.sep{width:1px;height:26px;background:var(--line)}
+.stat{font-size:.85rem;color:var(--muted)}
+.stat b{color:var(--ink);font-variant-numeric:tabular-nums}
+.diagram-scroll{overflow-x:auto;margin-top:10px}
+#diagram{display:block;width:100%;min-width:860px;height:auto}
+/* svg */
+.blk{fill:var(--block);stroke:var(--blockline);stroke-width:1.4}
+.blk-title{font:600 15px ui-monospace,Consolas,monospace;fill:var(--ink)}
+.blk-sub{font:12px system-ui,sans-serif;fill:var(--muted)}
+.lbl{font:12px ui-monospace,Consolas,monospace;fill:var(--muted)}
+.lbl-ink{font:12.5px ui-monospace,Consolas,monospace;fill:var(--ink)}
+.val{font:600 12px ui-monospace,Consolas,monospace}
+.wire{fill:none;stroke:var(--wire);stroke-width:2}
+.wire.v1{stroke:var(--one)} .wire.v0{stroke:var(--zero)}
+.wire.hot{stroke:var(--err)}
+.clknet{fill:none;stroke:var(--warn);stroke-width:2}
+.clknet.pulse{animation:pulse .35s ease-out}
+@keyframes pulse{0%{stroke-width:5;opacity:1}100%{stroke-width:2;opacity:.9}}
+.cell{stroke:var(--blockline);stroke-width:1}
+.cell.c1{fill:var(--one)} .cell.c0{fill:var(--chip)}
+.celltxt{font:600 11px ui-monospace,Consolas,monospace;text-anchor:middle;dominant-baseline:central}
+.reg{fill:var(--chip);stroke:var(--blockline);stroke-width:1;rx:4}
+.reg.r1{fill:var(--one);stroke:var(--one)}
+.regtxt{font:600 12px ui-monospace,Consolas,monospace;text-anchor:middle;dominant-baseline:central;fill:var(--ink)}
+.reg.r1 + .regtxt{fill:#fff}
+.xor{fill:var(--block);stroke:var(--blockline);stroke-width:1.4}
+.ff{fill:var(--block);stroke:var(--blockline);stroke-width:1.4}
+.token circle{stroke:#fff;stroke-width:1.5}
+.token text{font:700 11px ui-monospace,Consolas,monospace;fill:#fff;text-anchor:middle;dominant-baseline:central}
+.flash{fill:var(--err);opacity:0}
+.flash.on{animation:flash .6s ease-out}
+@keyframes flash{0%{opacity:.9}100%{opacity:0}}
+.ovl{display:none}
+.real .ovl{display:inline}
+.real .notreal{display:none}
+.ovl-box{fill:none;stroke:var(--dash);stroke-width:1.6;stroke-dasharray:6 4}
+.ovl-fill{fill:var(--panel);opacity:.85}
+.ovl-txt{font:600 11.5px ui-monospace,Consolas,monospace;fill:var(--dash)}
+.ovl-tag{font:10.5px system-ui,sans-serif;fill:var(--dash)}
+.dom-tx{fill:var(--tx)} .dom-rx{fill:var(--rx)}
+.bug .bugonly{display:inline} .bugonly{display:none}
+.bug .nobug{display:none}
+.bugwire{fill:none;stroke:var(--err);stroke-width:2.4;stroke-dasharray:5 3}
+.greyed{opacity:.35}
+/* layout below diagram */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:900px){.grid2{grid-template-columns:1fr}}
+canvas{display:block;width:100%}
+table{border-collapse:collapse;width:100%;font-size:.86rem}
+th,td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:right;font-variant-numeric:tabular-nums}
+th{color:var(--muted);font-weight:600;font-size:.8rem}
+th:first-child,td:first-child{text-align:left}
+td.mono{font-family:ui-monospace,Consolas,monospace}
+.ok{color:var(--one);font-weight:700} .bad{color:var(--err);font-weight:700}
+.hit{color:var(--err);font-weight:700;text-decoration:underline}
+.tblscroll{overflow-x:auto}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px;margin-top:8px}
+.card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--block)}
+.card h4{margin:0 0 4px;font-size:.93rem}
+.card p{margin:0;font-size:.87rem;color:var(--muted)}
+.card.notrtl{border:1.5px dashed var(--dash)}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.03em;padding:1px 7px;border-radius:999px;
+  border:1px solid currentColor;margin-left:6px;vertical-align:1px}
+.tag.rtl{color:var(--one)} .tag.no{color:var(--dash)}
+.note{border-left:3px solid var(--warn);padding:6px 10px;background:var(--chip);border-radius:0 6px 6px 0;font-size:.88rem;margin-top:10px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:18px;height:3px;vertical-align:middle;margin-right:5px;border-radius:2px}
+footer{margin-top:28px;color:var(--muted);font-size:.85rem}
+.themebtn{float:right}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <button class="themebtn" id="themeBtn" title="Toggle light/dark">◐</button>
+  <h1>Manchester + PRBS9 link: interactive RTL walk-through</h1>
+  <p>Every clock edge here runs a <b>cycle-accurate JavaScript port</b> of the five Verilog modules in
+  <a href="https://github.com/vishrutsharma777/manchester-encoding/tree/main/rtl"><code>rtl/</code></a>.
+  Follow a bit from the PRBS generator through the Manchester encoder, the channel (where errors are injected), the decoder and the self-synchronising checker.</p>
+  <div class="badges">
+    <span class="badge">port checked against <code>sim/prbs_rtl.txt</code>: <b>4096/4096 bits</b></span>
+    <span class="badge">testbench sweep reproduced: <b>5/5 rows exact</b></span>
+    <span class="badge">one half-bit clock · one payload bit per 2 cycles</span>
+  </div>
+</header>
+
+<section class="panel" id="sim">
+  <div class="controls">
+    <div class="grp">
+      <button id="btnReset" title="Assert rst_n, then release">⟲ Reset</button>
+      <button id="btnStep" title="One rising edge of clk">Step 1 clock</button>
+      <button id="btnStepBit" title="Two edges = one payload bit">Step 1 bit</button>
+      <button id="btnPlay" class="primary">▶ Play</button>
+    </div>
+    <div class="grp"><span class="stat">speed</span>
+      <input id="speed" type="range" min="0" max="8" value="2" aria-label="speed">
+      <span class="stat" id="speedLbl"></span>
+    </div>
+    <span class="sep"></span>
+    <div class="grp">
+      <button id="btnInject" class="danger" title="Flip the next half-bit on the channel">⚡ Flip next half-bit</button>
+      <span class="stat">random errors</span>
+      <select id="rate">
+        <option value="0">off</option><option value="50">1 in 50</option>
+        <option value="20">1 in 20</option><option value="8">1 in 8</option>
+      </select>
+    </div>
+    <span class="sep"></span>
+    <label class="tog"><input type="checkbox" id="bug"> Phase-alignment bug (no <code>en_d</code>)</label>
+    <label class="tog"><input type="checkbox" id="real"> Real-chip clock view</label>
+  </div>
+  <div class="controls" style="margin-top:8px">
+    <span class="stat">cycle <b id="sCycle">0</b></span>
+    <span class="stat">bits sent <b id="sTx">0</b></span>
+    <span class="stat">checked <b id="sChk">0</b></span>
+    <span class="stat">PRBS errors <b id="sErr">0</b></span>
+    <span class="stat">violations <b id="sViol">0</b></span>
+    <span class="stat">injected <b id="sInj">0</b> (1st half <b id="sInj1">0</b> · 2nd half <b id="sInj2">0</b>)</span>
+    <span class="stat">checker <b id="sLock">filling</b></span>
+  </div>
+
+  <div class="diagram-scroll">
+  <svg id="diagram" viewBox="0 0 1200 600" role="img" aria-label="Block diagram of the Manchester link">
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--wire)"/></marker>
+      <marker id="arrc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--warn)"/></marker>
+      <marker id="arrd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--dash)"/></marker>
+    </defs>
+
+    <!-- clock-domain shading (real-chip view) -->
+    <g class="ovl">
+      <rect class="dom-tx" x="8" y="52" width="452" height="420" rx="10"/>
+      <rect class="dom-rx" x="652" y="52" width="540" height="420" rx="10"/>
+      <text class="ovl-txt" x="18" y="70">tx_clk domain · transmitter chip, own crystal</text>
+      <text class="ovl-txt" x="662" y="70">rx_clk domain · receiver chip, own crystal (a few ppm off tx_clk)</text>
+      <text class="ovl-tag" x="474" y="70">no shared clock</text>
+    </g>
+    <text class="lbl notreal" x="12" y="40">One clock domain: clk (the half-bit clock, 100 MHz in tb_link.v) drives every flop on both sides; the testbench loops hb_tx back to hb_rx.</text>
+    <text class="ovl-tag ovl" x="12" y="40">Real-chip view: dashed pink = what a two-chip version would need. Not in this RTL; the simulation still runs the RTL above.</text>
+
+    <!-- ===== prbs_gen ===== -->
+    <rect class="blk" x="20" y="110" width="210" height="175" rx="8"/>
+    <text class="blk-title" x="32" y="132">prbs_gen</text>
+    <text class="blk-sub" x="32" y="149">LFSR x⁹ + x⁵ + 1, seed 1</text>
+    <g id="genCells"></g>
+    <text class="lbl" x="40" y="162">8</text><text class="lbl" x="120" y="162">4</text><text class="lbl" x="200" y="162">0</text>
+    <path class="wire" d="M44,190 V238 H111"/>
+    <path class="wire" d="M124,190 V225"/>
+    <circle class="xor" cx="124" cy="238" r="13"/><path d="M111,238 H137 M124,225 V251" stroke="var(--blockline)" stroke-width="1.4"/>
+    <path class="wire" id="genFb" d="M137,238 H222 V177 H215" marker-end="url(#arr)"/>
+    <text class="lbl" x="146" y="232">fb</text>
+    <text class="lbl" x="32" y="275">dout = fb (combinational)</text>
+    <g transform="translate(115,285)"><path d="M0,0 L8,-9 L16,0" fill="none" stroke="var(--warn)" stroke-width="1.5"/></g>
+
+    <!-- tx_bit wire -->
+    <path class="wire" id="w_txbit" d="M222,238 H282" marker-end="url(#arr)"/>
+    <text class="lbl" x="236" y="230">tx_bit</text>
+    <text class="val" id="v_txbit" x="250" y="256"></text>
+
+    <!-- bit_req back to gen -->
+    <path class="wire" id="w_bitreq" d="M350,110 V90 H125 V108" marker-end="url(#arr)"/>
+    <text class="lbl" x="150" y="84">bit_req = en &amp; ~ph  (advance once per payload bit)</text>
+    <text class="val" id="v_bitreq" x="358" y="102"></text>
+
+    <!-- ===== manchester_enc ===== -->
+    <rect class="blk" x="285" y="110" width="170" height="175" rx="8"/>
+    <text class="blk-title" x="297" y="132">manchester_enc</text>
+    <text class="blk-sub" x="297" y="149">1 → {1,0} · 0 → {0,1}</text>
+    <text class="lbl" x="297" y="178">ph</text>   <rect class="reg" id="r_eph" x="345" y="165" width="34" height="20"/><text class="regtxt" id="t_eph" x="362" y="175"></text>
+    <text class="lbl" x="297" y="205">held</text> <rect class="reg" id="r_held" x="345" y="192" width="34" height="20"/><text class="regtxt" id="t_held" x="362" y="202"></text>
+    <text class="lbl" x="297" y="232">dout</text> <rect class="reg" id="r_edout" x="345" y="219" width="34" height="20"/><text class="regtxt" id="t_edout" x="362" y="229"></text>
+    <text class="blk-sub" id="encSays" x="297" y="268"></text>
+    <g transform="translate(362,285)"><path d="M0,0 L8,-9 L16,0" fill="none" stroke="var(--warn)" stroke-width="1.5"/></g>
+
+    <!-- hb_tx -->
+    <path class="wire" id="w_hbtx" d="M455,229 H503" marker-end="url(#arr)"/>
+    <text class="lbl" x="460" y="221">hb_tx</text>
+    <text class="val" id="v_hbtx" x="470" y="248"></text>
+
+    <!-- ===== channel ===== -->
+    <rect class="blk" x="505" y="160" width="130" height="125" rx="8" style="stroke-dasharray:3 3"/>
+    <text class="blk-title" x="515" y="180">channel</text>
+    <text class="blk-sub" x="515" y="196">(in tb_link.v)</text>
+    <circle class="xor" cx="570" cy="229" r="13"/><path d="M557,229 H583 M570,216 V242" stroke="var(--blockline)" stroke-width="1.4"/>
+    <path class="wire" d="M505,229 H557"/>
+    <path class="wire" id="w_inj" d="M570,330 V242" marker-end="url(#arr)"/>
+    <text class="lbl" x="530" y="345">err_inject</text>
+    <text class="val" id="v_inj" x="580" y="300"></text>
+    <circle class="flash" id="flashInj" cx="570" cy="229" r="26"/>
+    <text class="blk-sub" x="515" y="275">hb_rx = hb_tx ^ err</text>
+
+    <!-- hb_rx to decoder -->
+    <path class="wire" id="w_hbrx" d="M583,229 H787" marker-end="url(#arr)"/>
+    <text class="lbl" x="640" y="190">hb_rx</text>
+    <text class="val" id="v_hbrx" x="682" y="190"></text>
+
+    <!-- real-chip inserts on the RX input -->
+    <g class="ovl">
+      <rect class="ovl-fill" x="660" y="196" width="56" height="66" rx="5"/>
+      <rect class="ovl-box" x="660" y="196" width="56" height="66" rx="5"/>
+      <text class="ovl-txt" x="667" y="216">2-FF</text><text class="ovl-txt" x="667" y="231">sync</text>
+      <text class="ovl-tag" x="664" y="252">metastab.</text>
+      <rect class="ovl-fill" x="722" y="196" width="58" height="66" rx="5"/>
+      <rect class="ovl-box" x="722" y="196" width="58" height="66" rx="5"/>
+      <text class="ovl-txt" x="728" y="216">CDR /</text><text class="ovl-txt" x="728" y="231">4× over-</text>
+      <text class="ovl-txt" x="728" y="246">sample</text>
+      <text class="ovl-tag" x="664" y="282">not in this RTL</text>
+    </g>
+
+    <!-- ===== manchester_dec ===== -->
+    <rect class="blk" x="790" y="110" width="175" height="175" rx="8"/>
+    <text class="blk-title" x="802" y="132">manchester_dec</text>
+    <text class="blk-sub" x="802" y="149">bit = 1st half · viol = halves equal</text>
+    <text class="lbl" x="802" y="178">ph</text>   <rect class="reg" id="r_dph" x="845" y="165" width="34" height="20"/><text class="regtxt" id="t_dph" x="862" y="175"></text>
+    <text class="lbl" x="802" y="205">h1</text>   <rect class="reg" id="r_h1" x="845" y="192" width="34" height="20"/><text class="regtxt" id="t_h1" x="862" y="202"></text>
+    <text class="lbl" x="888" y="178">dout</text> <rect class="reg" id="r_ddout" x="925" y="165" width="30" height="20"/><text class="regtxt" id="t_ddout" x="940" y="175"></text>
+    <text class="lbl" x="888" y="205">valid</text><rect class="reg" id="r_dval" x="925" y="192" width="30" height="20"/><text class="regtxt" id="t_dval" x="940" y="202"></text>
+    <text class="lbl" x="888" y="232">viol</text> <rect class="reg" id="r_dviol" x="925" y="219" width="30" height="20"/><text class="regtxt" id="t_dviol" x="940" y="229"></text>
+    <text class="blk-sub" id="decSays" x="802" y="268"></text>
+    <g transform="translate(860,285)"><path d="M0,0 L8,-9 L16,0" fill="none" stroke="var(--warn)" stroke-width="1.5"/></g>
+
+    <!-- dec -> chk -->
+    <path class="wire" id="w_rxbit" d="M965,175 H1003" marker-end="url(#arr)"/>
+    <text class="lbl" x="969" y="168">bit</text>
+    <path class="wire" id="w_rxval" d="M965,202 H1003" marker-end="url(#arr)"/>
+    <text class="lbl" x="969" y="196">vld</text>
+    <path class="wire" id="w_rxviol" d="M965,229 H985 V345 H1003" marker-end="url(#arr)"/>
+    <text class="lbl" x="967" y="248">viol</text>
+
+    <!-- ===== prbs_check ===== -->
+    <rect class="blk" x="1005" y="110" width="183" height="175" rx="8"/>
+    <text class="blk-title" x="1015" y="132">prbs_check</text>
+    <text class="blk-sub" x="1015" y="149">self-synchronising</text>
+    <g id="chkCells"></g>
+    <text class="lbl" x="1015" y="207">pred</text><rect class="reg" id="r_pred" x="1050" y="194" width="26" height="20"/><text class="regtxt" id="t_pred" x="1063" y="204"></text>
+    <text class="lbl" x="1086" y="207">err</text><rect class="reg" id="r_err" x="1112" y="194" width="26" height="20"/><text class="regtxt" id="t_err" x="1125" y="204"></text>
+    <text class="lbl" x="1015" y="234">fill</text><text class="lbl-ink" id="t_fill" x="1045" y="234"></text>
+    <text class="lbl" x="1086" y="234">locked</text><rect class="reg" id="r_lock" x="1140" y="221" width="26" height="20"/><text class="regtxt" id="t_lock" x="1153" y="231"></text>
+    <text class="lbl" x="1015" y="258">err_cnt</text><text class="lbl-ink" id="t_errcnt" x="1072" y="258"></text>
+    <text class="lbl" x="1015" y="276">bit_cnt</text><text class="lbl-ink" id="t_bitcnt" x="1072" y="276"></text>
+    <g transform="translate(1088,285)"><path d="M0,0 L8,-9 L16,0" fill="none" stroke="var(--warn)" stroke-width="1.5"/></g>
+
+    <!-- viol counter -->
+    <rect class="blk" x="1005" y="325" width="183" height="42" rx="6"/>
+    <text class="lbl" x="1015" y="350">viol_cnt</text><text class="lbl-ink" id="t_violcnt" x="1080" y="350"></text>
+
+    <!-- ===== en and en_d ===== -->
+    <text class="lbl-ink" x="20" y="398">en (testbench, driven on negedge)</text>
+    <text class="val" id="v_en" x="262" y="398"></text>
+    <path class="wire" id="w_en" d="M20,405 H700"/>
+    <path class="wire" id="w_en_enc" d="M370,405 V288" marker-end="url(#arr)"/>
+    <!-- en_d flop -->
+    <g id="endGroup">
+      <rect class="ff" x="700" y="380" width="70" height="50" rx="4"/>
+      <text class="lbl-ink" x="710" y="400">D  en_d</text><text class="lbl" x="712" y="420">Q</text>
+      <path d="M727,430 L735,421 L743,430" fill="none" stroke="var(--warn)" stroke-width="1.5"/>
+    </g>
+    <path class="wire" id="w_end" d="M770,405 H868 V288" marker-end="url(#arr)"/>
+    <text class="lbl" x="800" y="398">en_d</text>
+    <text class="val" id="v_end" x="836" y="398"></text>
+    <text class="blk-sub nobug" x="385" y="436">en_d = en delayed 1 cycle: puts the decoder</text>
+    <text class="blk-sub nobug" x="385" y="451">on the symbol boundary (fix for bug #1)</text>
+    <g class="bugonly">
+      <path class="bugwire" d="M680,405 V365 H785 V405"/>
+      <text class="lbl" x="660" y="358" style="fill:var(--err)">bug: decoder enabled by en directly</text>
+    </g>
+    <!-- real-chip: en crossing into rx domain -->
+    <g class="ovl">
+      <rect class="ovl-fill" x="600" y="385" width="46" height="40" rx="4"/>
+      <rect class="ovl-box" x="600" y="385" width="46" height="40" rx="4"/>
+      <text class="ovl-txt" x="606" y="403">2-FF</text><text class="ovl-txt" x="606" y="418">sync</text>
+      <text class="ovl-tag" x="560" y="378">control crossing into rx_clk</text>
+    </g>
+
+    <!-- ===== clock tree ===== -->
+    <g class="notreal">
+      <rect class="blk" x="20" y="500" width="90" height="40" rx="6"/>
+      <path d="M32,526 h10 v-12 h10 v12 h10 v-12 h10 v12 h10" fill="none" stroke="var(--warn)" stroke-width="1.6"/>
+      <text class="lbl" x="22" y="556">clk (half-bit)</text>
+      <path class="clknet" id="clkA" d="M110,520 H1150"/>
+      <path class="clknet" d="M123,520 V292 M370,520 V292 M735,520 V433 M868,520 V292 M1096,520 V370"/>
+      <text class="lbl" x="400" y="513">one clock: TX and RX flops sample on the same edge, so phase is known by construction</text>
+    </g>
+    <g class="ovl">
+      <rect class="blk" x="20" y="500" width="90" height="40" rx="6"/>
+      <path d="M32,526 h10 v-12 h10 v12 h10 v-12 h10 v12 h10" fill="none" stroke="var(--warn)" stroke-width="1.6"/>
+      <text class="lbl" x="22" y="556">tx_clk osc</text>
+      <path class="clknet" id="clkTx" d="M110,520 H455 M123,520 V292 M370,520 V292"/>
+      <rect class="blk" x="660" y="500" width="90" height="40" rx="6"/>
+      <path d="M672,526 h10 v-12 h10 v12 h10 v-12 h10 v12 h10" fill="none" stroke="var(--warn)" stroke-width="1.6"/>
+      <text class="lbl" x="662" y="556">rx_clk osc</text>
+      <path class="clknet" id="clkRx" d="M750,520 H1150 M735,500 V433 M868,520 V292 M1096,520 V370"/>
+      <text class="ovl-tag" x="470" y="525">✕ nothing carries tx_clk across</text>
+      <!-- reset synchronisers -->
+      <rect class="ovl-fill" x="140" y="430" width="92" height="40" rx="4"/>
+      <rect class="ovl-box" x="140" y="430" width="92" height="40" rx="4"/>
+      <text class="ovl-txt" x="147" y="447">rst sync</text><text class="ovl-tag" x="147" y="462">async assert</text>
+      <rect class="ovl-fill" x="880" y="430" width="92" height="40" rx="4"/>
+      <rect class="ovl-box" x="880" y="430" width="92" height="40" rx="4"/>
+      <text class="ovl-txt" x="887" y="447">rst sync</text><text class="ovl-tag" x="887" y="462">sync release</text>
+      <!-- readout crossing -->
+      <path d="M1096,367 V392" stroke="var(--dash)" stroke-width="1.6" fill="none" marker-end="url(#arrd)"/>
+      <rect class="ovl-fill" x="1005" y="395" width="183" height="44" rx="5"/>
+      <rect class="ovl-box" x="1005" y="395" width="183" height="44" rx="5"/>
+      <text class="ovl-txt" x="1012" y="413">async FIFO / Gray counters</text>
+      <text class="ovl-tag" x="1012" y="429">+ 2-FF sync on 'locked'</text>
+      <rect class="ovl-fill" x="1005" y="545" width="183" height="40" rx="5"/>
+      <rect class="ovl-box" x="1005" y="545" width="183" height="40" rx="5"/>
+      <text class="ovl-txt" x="1012" y="563">status regs @ sys_clk</text>
+      <text class="ovl-tag" x="1012" y="578">CPU / APB reads counters</text>
+      <path d="M1180,439 V542" stroke="var(--dash)" stroke-width="1.6" fill="none" marker-end="url(#arrd)"/>
+    </g>
+
+    <g id="tokens"></g>
+  </svg>
+  </div>
+  <div class="legend">
+    <span><i style="background:var(--one)"></i>wire = 1</span>
+    <span><i style="background:var(--zero)"></i>wire = 0</span>
+    <span><i style="background:var(--err)"></i>injected error</span>
+    <span><i style="background:var(--warn)"></i>clock (△ = flop clock pin)</span>
+    <span><i style="background:var(--dash)"></i>real-chip additions (not in RTL)</span>
+  </div>
+</section>
+
+<section class="grid2">
+  <div class="panel">
+    <h2>Waveforms (last 36 cycles)</h2>
+    <canvas id="wave" height="420"></canvas>
+    <div class="stat" style="margin-top:6px">Values change on rising edges; each column is one clock cycle. The rightmost column is the cycle about to be clocked.</div>
+  </div>
+  <div class="panel">
+    <h2>Bit journey, TX → RX</h2>
+    <div class="tblscroll">
+    <table id="journey">
+      <thead><tr><th>bit #</th><th>TX bit</th><th>hb_tx halves</th><th>hb_rx halves</th><th>decoded</th><th>violation</th><th>checker</th><th>latency</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+    <div class="stat" style="margin-top:6px">Latency = clock edges from <code>bit_req</code> (TX samples the bit) to <code>rx_valid</code> (RX delivers it). A flipped half-bit is <span class="hit">underlined</span>. The checker spends its first 9 bits filling its register (“lock”). A <b>mismatch on a correctly decoded bit</b> is the ×3 effect: one wrong bit k is seen again when it passes the taps, at bits k+5 and k+9.</div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>How each block works <span class="tag rtl">IN THE RTL</span></h2>
+  <div class="cards">
+    <div class="card"><h4>prbs_gen.v</h4><p>A 9-bit Fibonacci LFSR, x⁹ + x⁵ + 1, seeded with 1 (all-zeros would lock up). It advances only on <code>bit_req</code>, so it makes one bit per payload bit. The output is the feedback bit. The same sequence is produced bit-for-bit in C, MATLAB, Python and this Verilog; the period is 511.</p></div>
+    <div class="card"><h4>manchester_enc.v</h4><p>Runs on the half-bit clock. On <code>ph=0</code> it samples <code>din</code> into <code>held</code> and sends it; on <code>ph=1</code> it sends <code>~held</code>. Every bit therefore has a mid-bit transition: the code is DC-free, which a capacitively coupled body channel needs. The output is registered, so it appears one cycle after <code>bit_req</code>.</p></div>
+    <div class="card"><h4>channel (testbench)</h4><p><code>hb_rx = hb_tx ^ err_inject</code>. Injection lives outside <code>link_top</code>, so the design stays synthesisable. <code>err_inject</code> comes from <code>$random</code>. An earlier LFSR-based injector made hits on neighbouring cycles correlated; two hits in one symbol cancel, so that version reported too few violations.</p></div>
+    <div class="card"><h4>manchester_dec.v</h4><p>Stores the first half in <code>h1</code>. On the second half it outputs <code>h1</code> as the bit and raises <code>viol</code> if both halves are equal. A hit on the first half flips the bit; a hit on the second half only raises a violation. Alignment is assumed, not recovered: the decoder must start on a symbol boundary.</p></div>
+    <div class="card"><h4>en_d (link_top.v)</h4><p>The encoder's output is registered, so the first half-bit appears one cycle after <code>en</code>. If the decoder starts at the same time, it pairs the second half of bit k with the first half of bit k+1, and about 50 % of symbols are flagged. Delaying its enable by one flop fixes this. Tick the bug box above to see it.</p></div>
+    <div class="card"><h4>prbs_check.v</h4><p>It shifts the <i>received</i> bit into its own LFSR and compares each new bit with <code>lfsr[8] ^ lfsr[4]</code>. After 9 bits the register holds only received data, so it locks wherever the stream started. One flipped bit is counted 3 times (taps + 1): once when compared, then once at each of the two taps.</p></div>
+  </div>
+</section>
+
+<section class="panel" id="sweep">
+  <h2>Re-run the testbench sweep in your browser</h2>
+  <p class="stat" style="margin:0 0 8px">This replays <code>tb/tb_link.v</code>: 200 000 payload bits per case, the same <code>$random</code> seed (IEEE 1364 algorithm), and the same start/stop on symbol boundaries. Each row is compared with <code>docs/link_results.md</code>, which Icarus Verilog wrote.</p>
+  <button id="btnSweep" class="primary">Run 5 cases (≈2 M clock edges)</button> <span class="stat" id="sweepStatus"></span>
+  <div class="tblscroll" style="margin-top:10px">
+  <table id="sweepTbl">
+    <thead><tr><th>1-in-N</th><th>injected</th><th>1st half</th><th>2nd half</th><th>violations</th><th>PRBS errs</th><th>checked</th><th>mult</th><th>vs Verilog</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  </div>
+  <div class="note"><b>Read the table:</b> (1) the clean case is exactly clean; (2) violations ≈ injected, while payload errors ≈ first-half hits only; (3) PRBS errors = 3.00 × first-half hits until errors start to overlap inside the 9-bit register (2.94 at 1 in 100).</div>
+</section>
+
+<section class="panel" id="realchip">
+  <h2>Clocks and CDC in a real two-chip link <span class="tag no">NOT IN THIS RTL · NEXT STEP</span></h2>
+  <p class="stat" style="margin:0">In this project, TX and RX share <code>clk</code> and the testbench loops <code>hb_tx</code> straight back to <code>hb_rx</code>. The receiver therefore knows the phase exactly, and one <code>en_d</code> flop is enough to align it. Real transmitter and receiver chips each have their own crystal. Tick <b>Real-chip clock view</b> to see where the crossings would go. The pink parts are design notes; the simulation above does not model them.</p>
+  <div class="cards">
+    <div class="card notrtl"><h4>Two oscillators</h4><p>tx_clk and rx_clk are a few ppm apart, so the RX sampling point slowly slides across the incoming half-bits. Without tracking, it eventually samples on a transition.</p></div>
+    <div class="card notrtl"><h4>2-FF synchronizer on hb_rx</h4><p>The incoming line is asynchronous to rx_clk, so the first flop can go metastable when an edge lands in its setup/hold window. A second flop gives it a cycle to settle before anything uses the value.</p></div>
+    <div class="card notrtl"><h4>CDR / oversampling</h4><p>Sample hb_rx at 4× the half-bit rate. Manchester guarantees a mid-bit edge in every bit, so the receiver can find that edge, choose the sample phase away from it, and re-align continuously. This replaces the fixed <code>en_d</code> and is listed in the README's extensions.</p></div>
+    <div class="card notrtl"><h4>Reset synchronizers</h4><p>Each domain asserts reset asynchronously and releases it synchronously to its own clock, so no flop sees rst_n rise close to its clock edge.</p></div>
+    <div class="card notrtl"><h4>Readout crossing</h4><p>For the CPU, <code>err_cnt</code>/<code>bit_cnt</code> cross to sys_clk through Gray-coded counters or an async FIFO; a binary counter must never be synchronised bit by bit. The single-bit <code>locked</code> goes through a 2-FF synchronizer.</p></div>
+  </div>
+
+  <h3>Illustration: a 2-FF synchronizer sampling an asynchronous half-bit stream</h3>
+  <div class="controls">
+    <span class="stat">rx_clk / tx_clk</span>
+    <select id="ratio">
+      <option value="1.03">1.03 (big offset, easy to see)</option>
+      <option value="1.01" selected>1.01</option>
+      <option value="0.97">0.97</option>
+    </select>
+    <span class="stat">setup+hold window</span>
+    <select id="win"><option value="0.06">6 % of period</option><option value="0.12" selected>12 %</option><option value="0.2">20 %</option></select>
+    <button id="btnMeta">New random phase</button>
+    <span class="stat" id="metaStat"></span>
+  </div>
+  <canvas id="meta" height="260" style="margin-top:8px"></canvas>
+  <div class="stat" style="margin-top:6px">Toy timing model, not simulated from the RTL and not real silicon numbers. Shaded = an edge of <code>async_in</code> fell inside rx_clk's setup/hold window, so FF1 goes metastable and resolves after a random time. FF2 samples one rx_clk later and is clean whenever FF1 settles within a period. That is why MTBF grows as e<sup>t<sub>r</sub>/τ</sup> with the time allowed to settle.</div>
+</section>
+
+<footer>
+  Source: <a href="https://github.com/vishrutsharma777/manchester-encoding">github.com/vishrutsharma777/manchester-encoding</a>. The page runs <code>demo/model.js</code>; <code>node demo/check_model.js</code> checks it against the Verilog outputs.
+</footer>
+</div>
+<script src="model.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

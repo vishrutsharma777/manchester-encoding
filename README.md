@@ -9,6 +9,19 @@ The deliverable is not "a link in Verilog". It is a measured agreement between
 four independent implementations, plus two structural results the testbench
 asserts rather than assumes.
 
+## Live demo
+
+**[vishrutsharma777.github.io/manchester-encoding](https://vishrutsharma777.github.io/manchester-encoding/)**:
+an interactive, cycle-accurate walk-through of the link. Step the clock and follow
+a bit from `prbs_gen` through the encoder, the channel, the decoder and the checker.
+You can flip half-bits, watch the waveforms, switch on the phase-alignment bug, and
+re-run the testbench sweep in the browser. `demo/model.js` is a JavaScript port of
+`rtl/`; `node demo/check_model.js` asserts that it reproduces `sim/prbs_rtl.txt` and
+every row of `docs/link_results.md` exactly (same `$random` stream as `tb_link.v`).
+A "real-chip" view marks where a two-chip version would need clock-domain crossings
+(2-FF synchronizers, CDR, reset synchronizers, async FIFO). Those are not in this RTL;
+they are the next step listed under Extensions.
+
 ## Result
 
 **All four implementations of PRBS9 agree bit-for-bit over 4096 bits:**
@@ -85,6 +98,7 @@ tb/tb_prbs_dump.v     writes sim/prbs_rtl.txt for cross-language diff
 scripts/golden_model.py  Python reference + independent link model
 scripts/compare_with_c.m MATLAB/C diff against the RTL stream
 scripts/run_all.py       everything, without make
+demo/                    interactive page (GitHub Pages) + JS model + check_model.js
 ```
 
 ## Build
